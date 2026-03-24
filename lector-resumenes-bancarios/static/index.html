@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calibrador Bancario ICBC</title>
+    <!-- Global dependency for canvas.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #ECEFF1; color: #263238; margin: 0; padding: 0; }
+        .header { background-color: #1565C0; padding: 1rem 2rem; color: white; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { margin: 0; font-size: 1.5rem; }
+        
+        .step-container { display: none; max-width: 1000px; margin: 2rem auto; border-radius: 8px; background: white; padding: 2rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .active-step { display: block; }
+        
+        button { background-color: #2E7D32; color: white; border: none; padding: 0.6rem 1.2rem; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1rem;}
+        button:hover { filter: brightness(1.1); }
+        button.btn-secondary { background-color: #546E7A; }
+        button.btn-primary { background-color: #1565C0; }
+        button.btn-danger { background-color: #D32F2F; margin-left: 10px; padding: 0.4rem 0.8rem;}
+
+        .config-list { list-style: none; padding: 0; }
+        .config-item { display: flex; justify-content: space-between; padding: 0.8rem; border-bottom: 1px solid #ECEFF1; align-items: center; }
+        
+        /* Canvas Layout */
+        .workspace { 
+            margin-top: 1rem; 
+            border: 2px dashed #B0BEC5; 
+            background: #CFD8DC; 
+            height: 70vh; 
+            overflow: auto; 
+            position: relative; 
+            border-radius: 6px;
+        }
+        .toolbar { padding: 12px; background: #ECEFF1; border-radius: 6px; display: flex; gap: 15px; align-items: center; margin-bottom: 10px; border: 1px solid #CFD8DC;}
+        
+        #pdf-canvas, #draw-canvas {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            user-select: none;
+        }
+        #draw-canvas { cursor: crosshair; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Conta Tools</h1>
+        <div style="display: flex; gap: 15px; align-items: center;">
+            <button class="btn-secondary" onclick="showStep('landing')" style="padding: 5px 14px; font-size:0.9em;">
+                🏠 Inicio
+            </button>
+            <div id="step-indicator" style="font-weight: bold; font-size: 1.1rem; background: rgba(0,0,0,0.2); padding: 5px 15px; border-radius: 20px;">Sección: Inicio</div>
+        </div>
+    </div>
+
+    <!-- APP STEPS -->
+    
+    <!-- W0: LANDING PAGE -->
+    <div class="step-container active-step" id="step-landing">
+        <div style="text-align:center; padding: 40px 20px;">
+    
+            <h1 style="font-size:2.4rem; color:#1565C0; margin-bottom:8px;">Conta Tools</h1>
+            <p style="color:#546E7A; font-size:1.1rem; margin-bottom:48px;">
+                Herramientas para contadores — Módulo: Lector de Extractos Bancarios
+            </p>
+    
+            <div style="display:flex; justify-content:center; gap:32px; flex-wrap:wrap;">
+    
+                <div onclick="resetToHome()"
+                     style="cursor:pointer; width:240px; padding:32px 24px; border-radius:12px;
+                            border:2px solid #1565C0; background:#F0F4FF;
+                            transition: box-shadow 0.2s;"
+                     onmouseover="this.style.boxShadow='0 6px 20px rgba(21,101,192,0.25)'"
+                     onmouseout="this.style.boxShadow='none'">
+                    <div style="font-size:2.5rem; margin-bottom:12px;">⚙️</div>
+                    <h2 style="margin:0 0 8px; color:#1565C0; font-size:1.2rem;">Calibrador</h2>
+                    <p style="margin:0; color:#546E7A; font-size:0.9rem;">
+                        Configurá las columnas de un nuevo banco o formato de extracto.
+                    </p>
+                </div>
+    
+                <div onclick="showStep('convert')"
+                     style="cursor:pointer; width:240px; padding:32px 24px; border-radius:12px;
+                            border:2px solid #2E7D32; background:#F0FFF4;
+                            transition: box-shadow 0.2s;"
+                     onmouseover="this.style.boxShadow='0 6px 20px rgba(46,125,50,0.25)'"
+                     onmouseout="this.style.boxShadow='none'">
+                    <div style="font-size:2.5rem; margin-bottom:12px;">📄➡️📊</div>
+                    <h2 style="margin:0 0 8px; color:#2E7D32; font-size:1.2rem;">Convertir a Excel</h2>
+                    <p style="margin:0; color:#546E7A; font-size:0.9rem;">
+                        Procesá uno o varios extractos PDF y descargá los Excel generados.
+                    </p>
+                </div>
+    
+            </div>
+        </div>
+    </div>
+    
+    <!-- W1: HOME (Calibrador) -->
+    <div class="step-container" id="step-home">
+        <h2>Perfiles de Calibración Guardados</h2>
+        <ul id="lista-perfiles" class="config-list">
+            <li>Cargando perfiles...</li>
+        </ul>
+        <br>
+        <button id="btn-nuevo" class="btn-primary" style="padding: 10px;">Crear Nueva Calibración (Sube PDF piloto)</button>
+        <button onclick="showStep('convert')" class="btn-secondary" style="margin-left: 20px; padding: 10px; float: right;">Ir a Conversor ➔</button>
+        <input type="file" id="pdf-upload" style="display: none;" accept="application/pdf">
+        <p id="upload-status" style="margin-left: 15px; color: #1565C0; font-weight: bold;"></p>
+    </div>
+
+    <!-- W5: CONVERSOR (Modo Producción) -->
+    <div class="step-container" id="step-convert">
+        <h2 style="margin-top: 0;">Conversión a Excel</h2>
+        <p style="color:#546E7A; margin-top:-10px;">Aplicá un perfil configurado previamente a uno o varios PDFs y generá un Excel por cada uno.</p>
+
+        <div style="display: flex; flex-direction: column; gap: 15px; max-width: 600px; margin-top: 20px;">
+
+            <label><b>1. Nombre de la empresa:</b><br>
+                <input type="text" id="inp-empresa" placeholder="Ej: Acme S.R.L." style="width:100%; padding:8px; margin-top:5px; border:1px solid #ccc; border-radius:4px;">
+            </label>
+
+            <label><b>2. Seleccioná el Perfil JSON adecuado:</b><br>
+                <select id="sel-perfil-convert" style="width:100%; padding:8px; margin-top:5px; border: 1px solid #ccc;"></select>
+            </label>
+
+            <div>
+                <b>3. Seleccioná los PDFs a convertir:</b>
+                <p style="margin:4px 0 8px; color:#546E7A; font-size:0.88em;">💡 Recomendación: nombrá los archivos con el prefijo <code>AAAA-MM</code> (ej: <code>2025-06_ICBC.pdf</code>) para que el período se detecte automáticamente.</p>
+                <input type="file" id="pdf-convert-file" accept="application/pdf" multiple style="margin-top:4px;">
+            </div>
+
+            <!-- Lista de archivos seleccionados -->
+            <div id="convert-file-list" style="display:none; border:1px solid #CFD8DC; border-radius:4px; background:#F5F8FC; padding:8px; max-height:160px; overflow-y:auto;">
+                <ul id="convert-file-names" style="margin:0; padding-left:18px; font-size:0.9em;"></ul>
+            </div>
+
+            <button id="btn-run-convert" class="btn-primary" style="padding: 12px; background-color: #0D47A1; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">▶ Iniciar Conversión</button>
+
+            <!-- Barra de progreso -->
+            <div id="convert-progress-wrap" style="display:none;">
+                <div style="background:#E0E0E0; border-radius:4px; height:10px; overflow:hidden;">
+                    <div id="convert-progress-bar" style="height:100%; width:0%; background:#1565C0; transition:width 0.3s;"></div>
+                </div>
+                <p id="convert-status" style="font-weight:bold; color:#1565C0; margin:8px 0 0;"></p>
+            </div>
+
+            <!-- Links de descarga por archivo -->
+            <div id="convert-downloads" style="display:none;">
+                <b>📥 Archivos generados:</b>
+                <ul id="convert-download-list" style="margin-top:8px; padding-left:18px; line-height:2;"></ul>
+            </div>
+
+        </div>
+
+        <div style="margin-top: 30px;">
+            <button class="btn-secondary" onclick="showStep('landing')">🏠 Volver al inicio</button>
+            <button class="btn-secondary" onclick="showStep('home')" style="margin-left: 10px;">⚙️ Ir a Calibrador</button>
+        </div>
+    </div>
+
+    <!-- W4-1: SETUP -->
+    <div class="step-container" id="step-setup">
+        <h2>Configurar Atributos del Documento</h2>
+        <div style="display: flex; flex-direction: column; gap: 15px; max-width: 500px;">
+            <label><b>Banco:</b> <input type="text" id="inp-banco" value="ICBC" style="width:100%; padding:5px;"></label>
+            <label><b>Tipo Documento / Tarjeta:</b> <input type="text" id="inp-tipo" value="Visa" style="width:100%; padding:5px;"></label>
+            <label><b>Período (YYYY-MM):</b> <input type="text" id="inp-periodo" value="2026-03" style="width:100%; padding:5px;"></label>
+            <label><b>Columnas (separadas por coma):</b><br>
+                <textarea id="inp-columnas" rows="3" style="width:100%; padding:5px; font-family: monospace;">FECHA, CONCEPTO, F.VALOR, COMPROBANTE, ORIGEN, CANAL, DEBITOS, CREDITOS, SALDOS</textarea>
+            </label>
+            <button id="btn-comenzar-marcado" class="btn-primary" style="margin-top: 10px;">Continuar al Dibujo de Límites ➔</button>
+        </div>
+    </div>
+
+    <!-- W2 & W3: MARCAR PDF -->
+    <div class="step-container" id="step-mark" style="max-width: 1200px;">
+        <h2 id="mark-title" style="margin-top:0;">Dibuja Límites Horizontales y Verticales</h2>
+        <p style="color:#546E7A; margin-top: -10px;">Haz click izquierdo en el documento para añadir líneas. El click derecho sobre una línea la borrará.</p>
+        
+        <div class="toolbar">
+            <span style="font-size: 1.1rem;"><strong>Herramienta:</strong></span>
+            <label style="cursor: pointer; background: white; padding: 6px 12px; border-radius: 4px; border: 1px solid #ccc;">
+                <input type="radio" name="mode" value="x" checked> ┋ Columnas
+            </label>
+            <label style="cursor: pointer; background: white; padding: 6px 12px; border-radius: 4px; border: 1px solid #ccc;">
+                <input type="radio" name="mode" value="y"> ═ Filas Útiles
+            </label>
+            <div style="flex-grow:1;"></div>
+            
+            <div style="border-left: 1px solid #ccc; padding-left: 15px; display:flex; gap:8px; align-items:center;">
+                <button class="btn-secondary" id="btn-prev-page" style="padding:4px 10px;">◀</button>
+                <span id="page-indicator" style="font-weight:bold; min-width:80px; text-align:center;">Pág 1 / ?</span>
+                <button class="btn-secondary" id="btn-next-page" style="padding:4px 10px;">▶</button>
+            </div>
+            
+            <div style="flex-grow:0.1;"></div>
+            <button class="btn-secondary" id="btn-zoom-out" title="Alejar">− Zoom</button>
+            <span id="zoom-level" style="font-weight: bold; width: 40px; text-align: center;">...</span>
+            <button class="btn-secondary" id="btn-zoom-in" title="Acercar">+ Zoom</button>
+        </div>
+
+        <div id="lines-counter" style="padding: 6px 12px; background:#E3F2FD; border-radius:4px; margin-bottom:8px; font-size:0.9em;">
+            Líneas verticales: <span id="count-x" style="font-weight:bold;">0</span> / <span id="needed-x">0</span> necesarias
+            &nbsp;|&nbsp;
+            Límites horizontales: <span id="count-y" style="font-weight:bold;">0</span> / 2 (opcional)
+        </div>
+
+        <div class="workspace" id="canvas-container">
+            <canvas id="pdf-canvas"></canvas>
+            <canvas id="draw-canvas"></canvas>
+        </div>
+
+        <div style="margin-top:20px; display: flex; justify-content: space-between;">
+            <button class="btn-secondary" onclick="resetToHome()">← Cancelar y Volver</button>
+            <button id="btn-next-step">Confirmar Límites ➔</button>
+        </div>
+    </div>
+
+    <!-- W4-2: PARITY CHOICE -->
+    <div class="step-container" id="step-parity">
+        <h2 style="margin-top:0; text-align:center;">¿Las páginas pares tienen el mismo layout?</h2>
+        <p style="color:#546E7A; text-align:center; max-width: 600px; margin: 10px auto;">
+            En muchos extractos bancarios las páginas pares tienen márgenes espejo: 
+            las columnas aparecen desplazadas horizontalmente respecto de las páginas impares.
+        </p>
+        
+        <div style="display: flex; flex-direction: column; gap: 15px; max-width: 500px; margin: 40px auto 20px;">
+            <button class="btn-primary" onclick="seleccionarParidad('mismo')" style="padding: 15px; font-size: 1.1rem;">
+                ✓ Mismo layout — no necesito calibrar pares
+            </button>
+            <button class="btn-secondary" onclick="seleccionarParidad('diferente')" style="padding: 15px; font-size: 1.1rem;">
+                ≠ Layout diferente — quiero calibrar pares
+            </button>
+        </div>
+        <div style="text-align: center;">
+            <button class="btn-secondary" onclick="iniciarMarcado('odd')">← Atrás (Revisar Impar)</button>
+        </div>
+    </div>
+
+    <!-- W4-3: PREVIEW OCR -->
+    <div class="step-container" id="step-preview" style="max-width: 1200px;">
+        <h2>Vista Previa del Procesamiento OCR</h2>
+        <p id="preview-status" style="color: #D32F2F; font-weight: bold;">⏳ Procesando imágenes mediante OCR. Por favor espera (10 - 20 segundos)...</p>
+        
+        <div style="overflow-x: auto; max-height: 400px; border: 1px solid #ccc; margin-bottom: 20px;">
+            <table id="preview-table" border="1" cellpadding="5" style="width: 100%; border-collapse: collapse; text-align: left; background: white; font-size: 0.9em;">
+                <thead style="background: #1565C0; color: white; position: sticky; top: 0;"><tr id="preview-header"></tr></thead>
+                <tbody id="preview-body"></tbody>
+            </table>
+        </div>
+
+        <div style="display: flex; justify-content: space-between;">
+            <button class="btn-secondary" onclick="showStep('parity')">← Atrás</button>
+            <button id="btn-save-calib" onclick="guardarCalibracion()" class="btn-primary" disabled>💾 Guardar Calibración JSON</button>
+        </div>
+    </div>
+
+    <!-- BANNER MODAL DE MÉTODO DE TEXTO -->
+    <div id="banner-metodo" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+        <div style="background:white; border-radius:12px; padding:32px; max-width:480px; text-align:center; box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+            <h2 style="color:#1565C0; margin-bottom:8px;">PDF con texto seleccionable</h2>
+            <p style="color:#546E7A; margin-bottom:24px;">
+                Este PDF tiene texto digital. Podés extraerlo directamente (más rápido y preciso) o usar OCR como si fuera un escaneo.
+            </p>
+            <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
+                <button onclick="elegirMetodo('text')" style="padding:14px 24px; background:#1565C0; color:white; border:none; border-radius:8px; cursor:pointer; font-size:1rem;">
+                    📝 Extracción directa
+                    <div style="font-size:0.75rem; opacity:0.85;">Recomendado</div>
+                </button>
+                <button onclick="elegirMetodo('ocr')" style="padding:14px 24px; background:#546E7A; color:white; border:none; border-radius:8px; cursor:pointer; font-size:1rem;">
+                    🔍 Usar OCR
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/canvas.js"></script>
+    <script>
+        let calCanvas = null;
+        let markPhase = 'odd'; // 'odd' o 'even'
+        
+        let stateJSON = {
+            pdf_filename: "",
+            pdf_type: "",
+            method: "auto",
+            banco: "",
+            tipo_documento: "",
+            periodo: "",
+            columnas: [],
+            paginas_impares: {},
+            limites_y_impares: [],
+            paginas_pares: null,
+            limites_y_pares: null
+        };
+
+        function showStep(stepName) {
+            document.querySelectorAll('.step-container').forEach(el => el.classList.remove('active-step'));
+            document.getElementById('step-' + stepName).classList.add('active-step');
+            
+            let titles = {
+                'landing': 'Inicio',
+                'home': 'Calibrador', 
+                'setup': 'Metadatos',
+                'mark': markPhase === 'odd' ? 'Calibración (Impar)' : 'Calibración (Par)',
+                'parity': 'Paridad',
+                'preview': 'Preview y Guardado',
+                'convert': 'Conversor'
+            };
+            document.getElementById('step-indicator').innerText = 'Sección: ' + titles[stepName];
+        }
+
+        // ================= W1: Flujo Inicial =================
+        async function fetchPerfiles() {
+            try {
+                let response = await fetch('/calibraciones');
+                let data = await response.json();
+                
+                const listEl = document.getElementById("lista-perfiles");
+                listEl.innerHTML = "";
+                
+                const selConvert = document.getElementById("sel-perfil-convert");
+                selConvert.innerHTML = "";
+                
+                if (data.calibraciones.length === 0) { 
+                    listEl.innerHTML = "<li>No hay calibraciones configuradas.</li>"; 
+                    selConvert.innerHTML = "<option value=''>Sin perfiles disponibles</option>";
+                } else {
+                    selConvert.innerHTML = "<option value=''>-- Selecciona un perfil --</option>";
+                }
+
+                data.calibraciones.forEach(archivo => {
+                    let item = document.createElement("li"); item.className = "config-item";
+                    item.innerHTML = `
+                        <span><strong>${archivo.nombre}</strong> (${(archivo.tamaño / 1024).toFixed(1)} KB)</span>
+                        <div>
+                            <button class="btn-secondary" onclick="editarPerfil('${archivo.nombre}')">Editar</button>
+                            <button class="btn-danger" onclick="eliminarPerfil('${archivo.nombre}')">Eliminar</button>
+                        </div>
+                    `;
+                    listEl.appendChild(item);
+                    
+                    let opt = document.createElement("option");
+                    opt.value = archivo.nombre;
+                    opt.text = archivo.nombre;
+                    selConvert.appendChild(opt);
+                });
+            } catch(e) {}
+        }
+
+        async function eliminarPerfil(nombre) {
+            if(!confirm(`¿Eliminar '${nombre}'?`)) return;
+            await fetch(`/calibraciones/${nombre}`, { method: 'DELETE' });
+            fetchPerfiles();
+        }
+
+        function resetToHome() {
+            stateJSON = {
+                pdf_filename: "", banco: "", tipo_documento: "", periodo: "",
+                columnas: [], paginas_impares: {}, limites_y_impares: [],
+                paginas_pares: null, limites_y_pares: null
+            };
+            document.getElementById("pdf-upload").value = "";
+            document.getElementById("upload-status").innerText = "";
+            document.getElementById("btn-nuevo").innerText = "Crear Nueva Calibración (Sube PDF piloto)";
+            
+            if(calCanvas) {
+                calCanvas.clearLines();
+            }
+            showStep('home');
+        }
+
+        async function editarPerfil(nombre) {
+            try {
+                let res = await fetch(`/api/calibraciones/${nombre}`);
+                if(res.ok) {
+                    let data = await res.json();
+                    
+                    stateJSON.banco = data.banco;
+                    stateJSON.tipo_documento = data.tipo_documento;
+                    stateJSON.periodo = data.periodo;
+                    stateJSON.columnas = data.columnas;
+                    stateJSON.paginas_impares = data.paginas_impares;
+                    stateJSON.paginas_pares = Object.keys(data.paginas_pares).length > 0 ? data.paginas_pares : null;
+                    stateJSON.limites_y_impares = data.limites_y_impares;
+                    stateJSON.limites_y_pares = data.limites_y_pares;
+                    
+                    document.getElementById("upload-status").innerText = `✅ Perfil '${nombre}' cargado. Subí un PDF de Muestra para seguir editando.`;
+                    document.getElementById("btn-nuevo").innerText = "Cargar PDF Muestra y Continuar Editando";
+                    
+                    document.getElementById('inp-banco').value = data.banco;
+                    document.getElementById('inp-tipo').value = data.tipo_documento;
+                    document.getElementById('inp-periodo').value = data.periodo;
+                    document.getElementById('inp-columnas').value = data.columnas.join(', ');
+                }
+            } catch(e) {
+                alert("Error cargando perfil");
+            }
+        }
+
+        document.getElementById("btn-nuevo").addEventListener("click", () => document.getElementById("pdf-upload").click());
+
+        document.getElementById("pdf-upload").addEventListener("change", async (e) => {
+            let file = e.target.files[0];
+            if(!file) return;
+
+            // Update form inputs if it's a fresh new (not editing)
+            if (!stateJSON.banco) {
+                document.getElementById("inp-banco").value = (file.name.includes("ICBC") ? "ICBC" : "Banco");
+            }
+
+            let formData = new FormData();
+            formData.append("file", file);
+            document.getElementById("upload-status").innerText = "⏳ Subiendo...";
+            
+            let req = await fetch('/upload-pdf', { method: "POST", body: formData });
+            if(req.ok) {
+                let json = await req.json();
+                document.getElementById("upload-status").innerText = "";
+                stateJSON.pdf_filename = json.pdf_filename; 
+                stateJSON.pdf_url = json.pdf_url;
+                
+                stateJSON.pdf_type = json.pdf_type;
+                stateJSON.method = "auto";
+                
+                if (json.pdf_type === "text") {
+                    mostrarBannerMetodo();
+                } else {
+                    showStep('setup');
+                }
+            } else {
+                document.getElementById("upload-status").innerText = "❌ Error al subir el pdf.";
+            }
+        });
+
+        function mostrarBannerMetodo() {
+            document.getElementById('banner-metodo').style.display = 'flex';
+        }
+
+        function elegirMetodo(metodo) {
+            stateJSON.method = metodo;
+            document.getElementById('banner-metodo').style.display = 'none';
+            showStep('setup');
+        }
+
+        document.getElementById('btn-comenzar-marcado').addEventListener('click', () => {
+            const periodo = document.getElementById('inp-periodo').value.trim();
+            if (!/^\d{4}-\d{2}$/.test(periodo)) {
+                alert("El período debe tener formato YYYY-MM (ej: 2025-06)");
+                return;
+            }
+
+            stateJSON.banco = document.getElementById('inp-banco').value.trim();
+            stateJSON.tipo_documento = document.getElementById('inp-tipo').value.trim();
+            stateJSON.periodo = periodo;
+            stateJSON.columnas = document.getElementById('inp-columnas').value.split(',').map(s => s.trim().toLowerCase());
+            
+            if(!calCanvas) {
+                calCanvas = new CalibrationCanvas('pdf-canvas', 'draw-canvas');
+                document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener('change', (e) => calCanvas.setMode(e.target.value)));
+                
+                document.getElementById('btn-zoom-in').addEventListener('click', () => { calCanvas.zoomIn(); updateZoomLabel(); });
+                document.getElementById('btn-zoom-out').addEventListener('click', () => { calCanvas.zoomOut(); updateZoomLabel(); });
+                
+                document.getElementById('btn-prev-page').addEventListener('click', () => {
+                    if (calCanvas.pageNum > 1) {
+                        calCanvas.setPage(calCanvas.pageNum - 1);
+                        updatePageIndicator();
+                    }
+                });
+                document.getElementById('btn-next-page').addEventListener('click', () => {
+                    if (calCanvas.pdfDoc && calCanvas.pageNum < calCanvas.pdfDoc.numPages) {
+                        calCanvas.setPage(calCanvas.pageNum + 1);
+                        updatePageIndicator();
+                    }
+                });
+            }
+            calCanvas.loadPDF(stateJSON.pdf_url).then(() => {
+                setTimeout(updateZoomLabel, 500);
+                iniciarMarcado('odd');
+            });
+        });
+
+        document.getElementById('draw-canvas').addEventListener('linesChanged', (e) => {
+            document.getElementById('count-x').innerText = e.detail.x;
+            document.getElementById('count-y').innerText = e.detail.y;
+            document.getElementById('needed-x').innerText = stateJSON.columnas.length - 1;
+            
+            const ok = e.detail.x === (stateJSON.columnas.length - 1);
+            document.getElementById('lines-counter').style.background = ok ? '#E8F5E9' : '#E3F2FD';
+        });
+
+        function updatePageIndicator() {
+            const total = calCanvas.pdfDoc ? calCanvas.pdfDoc.numPages : '?';
+            document.getElementById('page-indicator').innerText = `Pág ${calCanvas.pageNum} / ${total}`;
+        }
+
+        // ================= W2 y W3: Canvas Interactivo =================
+        function updateZoomLabel() {
+            if(calCanvas) document.getElementById('zoom-level').innerText = Math.round(calCanvas.scale * 100) + '%';
+        }
+
+        // Mapea la lista [X1, X2...] al objeto diccionario local
+        function arrayToDictRanges(xArr) {
+            let res = {};
+            let edges = [0.0].concat(xArr.slice().sort((a,b)=>a-b)).concat([100.0]);
+            for(let i=0; i<stateJSON.columnas.length; i++) {
+                if (i < edges.length - 1) {
+                    res[stateJSON.columnas[i]] = [edges[i], edges[i+1]];
+                }
+            }
+            return res;
+        }
+
+        function dictRangesToArray(dict) {
+            if(!dict) return [];
+            let r = [];
+            for(let key in dict) {
+                if(dict[key][0] !== 0.0) r.push(dict[key][0]);
+            }
+            return r;
+        }
+
+        function iniciarMarcado(phase) {
+            markPhase = phase;
+            showStep('mark');
+            
+            if (phase === 'odd') {
+                document.getElementById('mark-title').innerText = "Dibuja Límites: Página IMPAR (1)";
+                calCanvas.setPage(1);
+                updatePageIndicator();
+                calCanvas.linesX = dictRangesToArray(stateJSON.paginas_impares);
+                calCanvas.linesY = stateJSON.limites_y_impares ? [...stateJSON.limites_y_impares] : [];
+                calCanvas.redrawOverlay();
+            } else {
+                document.getElementById('mark-title').innerText = "Dibuja Límites: Página PAR (2)";
+                if (calCanvas.pdfDoc.numPages >= 2) {
+                    calCanvas.setPage(2);
+                    updatePageIndicator();
+                }
+                
+                calCanvas.linesX = stateJSON.paginas_pares ? dictRangesToArray(stateJSON.paginas_pares) : dictRangesToArray(stateJSON.paginas_impares);
+                calCanvas.linesY = stateJSON.limites_y_pares ? [...stateJSON.limites_y_pares] : [...stateJSON.limites_y_impares];
+                calCanvas.redrawOverlay();
+            }
+        }
+
+        document.getElementById('btn-next-step').addEventListener('click', () => {
+            if (calCanvas.linesX.length !== stateJSON.columnas.length - 1) {
+                alert(`Necesitas exactamente ${stateJSON.columnas.length - 1} líneas verticales para tus ${stateJSON.columnas.length} columnas.`);
+                return;
+            }
+
+            if (markPhase === 'odd') {
+                stateJSON.paginas_impares = arrayToDictRanges(calCanvas.linesX);
+                stateJSON.limites_y_impares = [...calCanvas.linesY];
+                showStep('parity');
+            } else {
+                stateJSON.paginas_pares = arrayToDictRanges(calCanvas.linesX);
+                stateJSON.limites_y_pares = [...calCanvas.linesY];
+                ejecutarPreview();
+            }
+        });
+
+        // ================= W4-2: Parity Choice =================
+        function seleccionarParidad(decision) {
+            if (decision === 'mismo') {
+                stateJSON.paginas_pares = null;
+                stateJSON.limites_y_pares = null;
+                ejecutarPreview();
+            } else {
+                iniciarMarcado('even');
+            }
+        }
+
+        // ================= W4-3: Preview y Guardado =================
+        async function ejecutarPreview() {
+            showStep('preview');
+            document.getElementById("btn-save-calib").disabled = true;
+            document.getElementById("preview-status").innerText = "⏳ Llamando a OCR y parseando. (Puede tomar minudos dependiendo la config de timeout)...";
+            document.getElementById("preview-body").innerHTML = "";
+
+            // Armar Header Thead
+            let thead = `<th style="width: 40px">Pág</th>`;
+            stateJSON.columnas.forEach(col => { thead += `<th>${col}</th>`; });
+            document.getElementById('preview-header').innerHTML = thead;
+
+            try {
+                let response = await fetch('/preview-ocr', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(stateJSON) // Payload = CalibrationPayload Model
+                });
+
+                if(!response.ok) throw new Error(await response.text());
+                
+                let data = await response.json();
+                let tbody = "";
+
+                data.rows.forEach(tx => {
+                    let tr = `<tr><td><b>${tx._pagina || '?'}</b></td>`;
+                    stateJSON.columnas.forEach(col => {
+                        tr += `<td>${tx[col] || ''}</td>`;
+                    });
+                    tr += `</tr>`;
+                    tbody += tr;
+                });
+
+                document.getElementById('preview-body').innerHTML = tbody;
+                document.getElementById("preview-status").innerText = `✅ ¡Preview lista! ${data.rows.length} movimientos detectados. Revisá la tabla.`;
+                document.getElementById("btn-save-calib").disabled = false;
+
+            } catch(e) {
+                document.getElementById("preview-status").innerText = `❌ Error en Preview: ${e}`;
+            }
+        }
+
+        async function guardarCalibracion() {
+            document.getElementById("btn-save-calib").disabled = true;
+            try {
+                let response = await fetch('/save-calibration', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(stateJSON)
+                });
+                
+                if(response.ok) {
+                    let data = await response.json();
+                    alert("¡Guardado extoso! Archivo creado: " + data.filename);
+                    fetchPerfiles(); 
+                    resetToHome(); 
+                } else {
+                    alert("Error guardando JSON");
+                }
+            } catch(e) {
+                alert("Error de Red al guardar");
+            }
+        }
+        
+        // ================= W5: Conversor masivo =================
+
+        // Mostrar lista de archivos seleccionados
+        document.getElementById("pdf-convert-file").addEventListener("change", (e) => {
+            const files = Array.from(e.target.files);
+            const listEl = document.getElementById("convert-file-names");
+            listEl.innerHTML = files.map(f => `<li>${f.name}</li>`).join("");
+            document.getElementById("convert-file-list").style.display = files.length ? "block" : "none";
+        });
+        
+        async function convertirArchivo(file, profile, empresa, actualizarProgreso) {
+            return new Promise(async (resolve) => {
+                const formData = new FormData();
+                formData.append("file", file);
+                formData.append("profile_name", profile);
+                formData.append("empresa", empresa);
+                formData.append("method", stateJSON.method || "auto");
+        
+                try {
+                    const res = await fetch("/convert", { method: "POST", body: formData });
+                    if (!res.ok) {
+                        let errMsg = "Error HTTP " + res.status;
+                        try {
+                            let errObj = await res.json();
+                            errMsg = errObj.detail || errMsg;
+                        } catch(e) {}
+                        resolve({ ok: false, error: errMsg });
+                        return;
+                    }
+        
+                    const reader = res.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = "";
+        
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split("\n\n");
+                        buffer = lines.pop(); // la última no está completa, se queda en buffer
+                        for (const line of lines) {
+                            if (!line.startsWith("data: ")) continue;
+                            try {
+                                const event = JSON.parse(line.substring(6));
+                                if (event.type === "progress") {
+                                    actualizarProgreso(event.pct, event.msg);
+                                } else if (event.type === "done") {
+                                    resolve({ ok: true, excel_url: event.excel_url });
+                                    return; // Terminamos
+                                } else if (event.type === "error") {
+                                    resolve({ ok: false, error: event.msg });
+                                    return; // Error de conversión
+                                }
+                            } catch(jsonErr) {
+                                console.error("Error parseando evento SSE: ", line, jsonErr);
+                            }
+                        }
+                    }
+                    resolve({ok: false, error: "Stream cerrado inesperadamente"});
+                } catch(netErr) {
+                    resolve({ok: false, error: "Error de red: " + netErr.message});
+                }
+            });
+        }
+
+        document.getElementById("btn-run-convert").addEventListener("click", async () => {
+            const fileInput = document.getElementById("pdf-convert-file");
+            if (!fileInput.files.length) { alert("Seleccioná al menos un PDF."); return; }
+            const profile = document.getElementById("sel-perfil-convert").value;
+            if (!profile) { alert("Seleccioná un perfil de calibración."); return; }
+
+            const empresa  = document.getElementById("inp-empresa").value.trim();
+            const files    = Array.from(fileInput.files);
+            const total    = files.length;
+
+            document.getElementById("btn-run-convert").disabled = true;
+            document.getElementById("convert-downloads").style.display = "none";
+            document.getElementById("convert-download-list").innerHTML = "";
+            document.getElementById("convert-progress-wrap").style.display = "block";
+            document.getElementById("convert-progress-bar").style.width = "0%";
+            document.getElementById("convert-status").style.color = "#FF8F00";
+
+            const results = [];
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                
+                const res = await convertirArchivo(file, profile, empresa, (pct, msg) => {
+                    document.getElementById("convert-status").innerText = `[${i + 1}/${total}] ${msg}`;
+                    document.getElementById("convert-progress-bar").style.width = pct + "%";
+                });
+                if (res.ok) {
+                    results.push({ name: file.name, url: res.excel_url, ok: true });
+                } else {
+                    results.push({ name: file.name, error: res.error, ok: false });
+                }
+            }
+
+            // Mostrar resultados finales
+            document.getElementById("convert-progress-bar").style.width = "100%";
+            const ok = results.filter(r => r.ok).length;
+            document.getElementById("convert-status").innerText =
+                `✅ ${ok}/${total} archivo(s) convertido(s).`;
+            document.getElementById("convert-status").style.color = ok === total ? "#2E7D32" : "#E65100";
+
+            const downloadList = document.getElementById("convert-download-list");
+            results.forEach(r => {
+                const li = document.createElement("li");
+                if (r.ok) {
+                    li.innerHTML = `<a href="${r.url}" download style="color:#1565C0; font-weight:bold;">📥 ${r.name.replace('.pdf', '.xlsx')}</a>`;
+                } else {
+                    li.innerHTML = `<span style="color:#D32F2F;">❌ ${r.name} — ${r.error}</span>`;
+                }
+                downloadList.appendChild(li);
+            });
+            document.getElementById("convert-downloads").style.display = "block";
+            document.getElementById("btn-run-convert").disabled = false;
+        });
+
+        // Initialize Call
+        fetchPerfiles();
+    </script>
+</body>
+</html>
