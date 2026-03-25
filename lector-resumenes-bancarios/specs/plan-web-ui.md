@@ -1,37 +1,36 @@
-# Plan — Migración a interfaz web (Chrome)
+# Plan — Migración a interfaz web
 
-**Versión:** 1.0
-**Fecha:** 2026-03-23
-**Contexto:** Reemplaza las Fases 2 y 3 del `plan.md` (tkinter) por una interfaz que corre en el browser. El `core/` no cambia.
-
----
-
-## Arquitectura
-
-```
-[Chrome]  ←HTTP→  [FastAPI  — server.py]  ←import→  [core/]
-```
-
-- **FastAPI** levanta un servidor local (`localhost:8000`)
-- El usuario abre Chrome apuntando a esa URL
-- El `core/` existente es llamado directamente por FastAPI — sin cambios
-- El PDF se renderiza en el browser usando **pdf.js** (Mozilla), eliminando la dependencia de `pdf2image` y `poppler` para la interfaz
+**Versión:** 2.0
+**Fecha original:** 2026-03-23
+**Actualizado:** 2026-03-24
+**Estado:** COMPLETADO — todas las fases implementadas
 
 ---
 
-## Lo que se construye
+## Arquitectura implementada
+
+```
+[Browser]  ←HTTP/SSE→  [FastAPI — server.py]  ←import→  [core/]
+```
+
+- **FastAPI** corre en `localhost:8000`
+- El PDF se renderiza en el browser con **pdf.js** (sin backend)
+- El `core/` es llamado directamente por FastAPI — sin cambios al pipeline
+- Progreso en tiempo real via **Server-Sent Events (SSE)**
+
+---
+
+## Archivos construidos
 
 | Archivo | Responsabilidad |
 |---|---|
-| `server.py` | Servidor FastAPI: rutas, lógica de sesión, llamadas al core |
-| `static/index.html` | Shell HTML de la app |
-| `static/app.js` | Lógica del wizard, comunicación con el servidor |
-| `static/canvas.js` | Canvas interactivo: renderizar PDF, marcar columnas |
-| `static/style.css` | Estilos |
+| `server.py` | Backend FastAPI: endpoints, SSE, llamadas al core |
+| `static/index.html` | SPA: landing, wizard de calibración, pantalla de conversión |
+| `static/canvas.js` | `CalibrationCanvas` — renderiza PDF, marcado interactivo de columnas |
 
 ---
 
-## Lo que NO cambia
+## Lo que NO cambió
 
 - Todo el `core/` (calibración, OCR, PDF reader, column parser, excel writer)
 - Los archivos JSON en `calibraciones/`
@@ -41,120 +40,74 @@
 
 ## Fases
 
-### Fase W1 — Servidor base
+### Fase W1 — Servidor base ✅ COMPLETADO
 
-Levantar FastAPI con:
-
+FastAPI con:
 - `GET /` → sirve `index.html`
-- `GET /calibraciones` → lista perfiles JSON existentes
+- `GET /calibraciones` → lista perfiles JSON
 - `DELETE /calibraciones/{nombre}` → elimina un perfil
-- `POST /upload-pdf` → recibe el PDF, lo guarda en sesión temporal, devuelve metadata (nombre, número de páginas)
-
-Al terminar: `python3 server.py` levanta el servidor y Chrome muestra la lista de perfiles.
-
----
-
-### Fase W2 — Renderizado de PDF en el canvas
-
-- En el frontend: `pdf.js` de Mozilla dibuja la imagen del PDF en un `<canvas>` HTML directamente en el navegador. (Decisión: renderizado del lado del cliente).
-- El servidor solo devuelve el archivo binario del PDF.
-- Navegación entre páginas (1 y 2) con botones y control de zoom fluido interactivo sin latencia.
-- Esto elimina el cuello de botella de renderizar en el backend y enviar base64, mejorando el rendimiento y reduciendo el consumo de memoria del servidor.
-
-Al terminar: el usuario puede ver el PDF en Chrome instantáneamente, navegar páginas y hacer zoom muy veloz.
+- `GET /api/calibraciones/{nombre}` → lee un perfil JSON
+- `POST /upload-pdf` → guarda PDF en temp con nombre UUID, detecta tipo (text/scanned)
 
 ---
 
-### Fase W3 — Marcado interactivo de columnas y filas (límites Y)
+### Fase W2 — Renderizado de PDF en el canvas ✅ COMPLETADO
 
-- Soporte para dos modos de dibujado:
-  - **Columnas (X):** Click izquierdo dibuja líneas verticales (almacenadas como % del ancho). Se dibujan zonas coloreadas como cabeceras.
-  - **Filas útiles (Y):** Click izquierdo dibuja hasta 2 líneas horizontales (Top y Bottom, almacenadas como % del alto) para restringir el área válida de escaneo y descartar encabezados basura.
-- Click derecho (o click sobre línea existente) → elimina la línea.
-- Contador de líneas marcadas vs. requeridas (en modo Columnas).
-
-Al terminar: el usuario puede marcar los límites de columnas y filas sobre el PDF, manteniendo la funcionalidad recientemente añadida a Tkinter.
+- **pdf.js** renderiza el PDF directamente en el browser.
+- Navegación entre páginas con botones ◀ ▶.
+- Zoom fluido sin latencia (todo del lado del cliente).
+- El servidor solo sirve el PDF como archivo estático desde `/temp/`.
 
 ---
 
-### Fase W4 — Wizard completo (State Management en el Cliente)
+### Fase W3 — Marcado interactivo de columnas y límites ✅ COMPLETADO
 
-Implementar los mismos pasos que `calibrator.py`, ahora como pantallas o componentes web manejados en JS. El frontend funcionará como "cerebro" acumulando el JSON de calibración en memoria hasta el final:
-
-1. **Home** — lista de perfiles obtenida vía API, botones Nueva / Editar / Eliminar.
-2. **Setup** — formulario: banco, tipo, período, PDF, lista de columnas.
-3. **Detect** — `POST /detect-pdf-type` → llama `detect_pdf_type()` del core.
-4. **Mark odd** — canvas con marcado (X e Y), página impar (W2 + W3).
-5. **Parity choice** — ¿mismo layout en pares?
-6. **Mark even** — canvas con marcado (X e Y), página par (si aplica).
-7. **Preview** — `POST /preview-ocr` → envía un payload con los rangos seleccionados vía JSON; ejecuta el OCR en páginas 1, 2 y 3 devolviendo JSON filtrado → tabla HTML mostrando las transacciones limpias de varias páginas.
-8. **Review & Save** — `POST /save-calibration` → envía el JSON completo acumulado durante las etapas; llama `CalibrationIO.save()`.
-
-Al terminar: el wizard se siente como una Single Page Application (SPA) y genera el mismo JSON.
+- **Modo columnas (X):** click izquierdo agrega líneas verticales (como % del ancho); click derecho elimina.
+- **Modo límites horizontales (Y):** marca área útil (top/bottom) para excluir encabezados y pies.
+- Contador en tiempo real: verde cuando se alcanza el número requerido de líneas.
+- Evento custom `linesChanged` para sincronizar el contador con el HTML.
 
 ---
 
-### Fase W5 — Pantalla principal de conversión
+### Fase W4 — Wizard completo ✅ COMPLETADO
 
-Reemplaza la GUI principal de tkinter (`main.py`) como página adicional:
+Pasos implementados en `static/index.html`:
 
-- Selector de PDF (file input)
-- Selector de perfil de calibración (dropdown con perfiles disponibles)
-- Botón "Convertir" → `POST /convert` → corre el pipeline completo, devuelve el Excel
-- Barra de progreso (via polling o SSE)
-- Botón "Descargar Excel" al terminar
-
-Al terminar: Sole puede convertir un extracto sin tocar la terminal.
-
----
-
-### Fase W6 — Calidad y pulido
-
-- Manejo de errores con mensajes claros en cada paso
-- Estados de carga (spinners) durante operaciones lentas (OCR, conversión)
-- Confirmaciones antes de eliminar o sobreescribir
-- Layout responsive mínimo (que no se rompa al cambiar el tamaño de la ventana)
+1. **Landing** — pantalla de inicio con tarjetas "Calibrador" y "Convertir a Excel".
+2. **Home** — lista de perfiles con botones Editar / Eliminar / Nueva calibración.
+3. **Setup** — banco, tipo, período (validado como YYYY-MM), columnas editables.
+4. **Mark odd** — canvas con marcado de columnas e Y-bounds, página impar.
+5. **Parity choice** — ¿mismo layout en páginas pares?
+6. **Mark even** — canvas para página par (si aplica).
+7. **Preview** — `POST /preview-ocr` → tabla de transacciones detectadas.
+8. **Review & Save** — `POST /save-calibration` → JSON guardado en `calibraciones/`.
 
 ---
 
-## Orden de ejecución
+### Fase W5 — Pantalla de conversión ✅ COMPLETADO
 
-```
-W1 → W2 → W3 → W4 → W5 → W6
-```
-
-Cada fase produce algo usable y testeable antes de pasar a la siguiente.
-
----
-
-## Dependencias nuevas
-
-```bash
-pip install fastapi uvicorn python-multipart
-```
-
-- `fastapi` + `uvicorn`: servidor web
-- `python-multipart`: necesario para recibir archivos (upload de PDF)
-
-Las demás dependencias ya están instaladas.
+- Input de empresa (aparece en encabezado del Excel).
+- Dropdown de perfiles de calibración.
+- Upload de uno o varios PDFs.
+- Si el PDF tiene texto: pregunta si usar extracción directa o OCR.
+- Botón "Convertir" → SSE con progreso página a página.
+- Botón de descarga por cada Excel generado.
 
 ---
 
-## Relación con el plan.md existente
+### Fase W6 — Calidad y pulido ✅ COMPLETADO
 
-| plan.md | plan-web-ui.md |
-|---|---|
-| Fase 1 (core) | Sin cambios — prerequisito |
-| Fase 2 (calibrator tkinter) | Reemplazado por W1–W4 |
-| Fase 3 (GUI principal tkinter) | Reemplazado por W5 |
-| Fase 4 (limpieza) | Se mantiene, se agrega la eliminación de `calibrator.py` y `main.py` tkinter |
+- Mensajes de error claros en cada paso del wizard y en la conversión.
+- Spinners durante OCR y conversión.
+- Confirmación antes de eliminar perfiles o sobreescribir calibraciones existentes.
+- Layout funcional y consistente.
 
 ---
 
-## Criterio global de éxito
+## Criterio global de éxito — Verificación final
 
-1. `python3 server.py` → Chrome abre la app en `localhost:8000`
-2. Se puede crear una calibración completa sin la terminal
-3. Se puede convertir un PDF a Excel sin la terminal
-4. El JSON generado es compatible con `pdf_to_excel.py --profile` (retrocompatibilidad)
-5. No hay dependencia de tkinter en el flujo principal
+1. ✅ `uvicorn server:app --reload` → Chrome muestra la app en `localhost:8000`.
+2. ✅ Se puede crear una calibración completa sin la terminal.
+3. ✅ Se puede convertir un PDF a Excel sin la terminal.
+4. ✅ El JSON generado es compatible con `pdf_to_excel.py --profile`.
+5. ✅ No hay dependencia de tkinter en el flujo principal (movido a `legacy/`).

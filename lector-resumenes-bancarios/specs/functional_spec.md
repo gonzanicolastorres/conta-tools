@@ -1,18 +1,18 @@
 # Especificación Funcional — Lector de Resúmenes Bancarios
 
-**Versión:** 1.0
-**Fecha:** 2026-03-23
-**Estado:** Acordado, pendiente de implementación
+**Versión:** 2.0
+**Fecha:** 2026-03-24
+**Estado:** Implementado — refleja el sistema en producción
 
 ---
 
 ## 1. Objetivo
 
-Convertir extractos bancarios en PDF escaneado (imágenes) a archivos Excel estructurados, con soporte para múltiples bancos/formatos y perfiles de calibración reutilizables. El sistema está diseñado para uso doméstico y debe ser accesible sin conocimientos técnicos.
+Convertir extractos bancarios en PDF (escaneados o digitales) a archivos Excel estructurados, con soporte para múltiples bancos/formatos y perfiles de calibración reutilizables. El sistema corre como app web local y es accesible sin conocimientos técnicos.
 
 ---
 
-## 2. Arquitectura objetivo
+## 2. Arquitectura
 
 ```
 lector-resumenes-bancarios/
@@ -20,15 +20,19 @@ lector-resumenes-bancarios/
 │   └── {banco}_{tipo}_{yyyy-mm}.json
 ├── core/
 │   ├── calibration.py               ← CalibrationData, CalibrationIO, CalibrationFinder
-│   ├── pdf_reader.py                ← detect_pdf_type, extract_text, render_pages
-│   ├── ocr_engine.py                ← run_ocr, group_into_rows
-│   ├── column_parser.py             ← assign_columns, parse_amount
-│   └── excel_writer.py              ← write_excel
-├── calibrator.py                    ← wizard interactivo de calibración
-├── main.py                          ← GUI principal (conversión)
-├── specs/
-│   ├── functional_spec.md           ← este archivo
-│   └── plan.md                      ← plan de ejecución
+│   ├── pdf_reader.py                ← detect_pdf_type, render_pages, extract_page_words_plumber
+│   ├── ocr_engine.py                ← run_ocr, group_into_rows, group_words_into_rows
+│   ├── column_parser.py             ← assign_columns, parse_amount, is_saldo_inicial
+│   └── excel_writer.py              ← write_excel (hojas: Movimientos, OCR Raw, Alertas)
+├── server.py                        ← backend FastAPI con SSE para progreso
+├── pdf_to_excel.py                  ← librería de conversión (función convert()) + CLI
+├── diagnostico.py                   ← CLI para depurar calibraciones
+├── compare_excel.py                 ← CLI para comparar dos Excel
+├── static/
+│   ├── index.html                   ← SPA: landing, calibrador, conversor
+│   └── canvas.js                    ← CalibrationCanvas interactivo (pdf.js)
+├── legacy/                          ← versión tkinter descontinuada
+├── specs/                           ← documentación de diseño
 └── README.md
 ```
 
@@ -136,55 +140,45 @@ Generación de Excel (2 hojas: Movimientos + OCR Raw)
 
 ---
 
-## 6. Wizard de calibración (`calibrator.py`)
+## 6. Wizard de calibración (interfaz web — `static/index.html` + `canvas.js`)
 
 ### 6.1 Pasos del wizard
 
-1. **Configuración**: banco, tipo de documento, período (yyyy-mm), lista de columnas (editable: agregar/quitar/reordenar).
-2. **Auto-detección de PDF**: verificar si el PDF tiene texto o no; informar al usuario.
-3. **Marcar columnas — páginas impares**: canvas con zoom, el usuario hace click para agregar líneas verticales (N-1 líneas para N columnas). Muestra zonas de color como feedback.
-4. **¿Calibrar páginas pares también?**: branching.
-   - SÍ → paso 5.
-   - NO → copiar rangos de impares a pares.
-5. **Marcar columnas — páginas pares** (igual que paso 3, pero sobre página 2 del PDF).
-6. **Preview**: tabla de texto parseado (primeras filas del PDF) usando los rangos actuales, para verificar que la asignación es correcta.
-7. **Guardar**: confirmar nombre y guardar JSON en `calibraciones/`.
+1. **Setup**: banco, tipo de documento, período (yyyy-mm), lista de columnas (editable). Validación de formato YYYY-MM en el campo período.
+2. **Subir PDF**: el PDF se renderiza en el canvas usando pdf.js (lado del cliente).
+3. **Marcar columnas — páginas impares**: canvas interactivo con navegación de páginas (◀ ▶), zoom, y contador en tiempo real de líneas marcadas vs. requeridas.
+4. **¿Calibrar páginas pares también?**: branching — SÍ → paso 5 / NO → copia rangos de impares.
+5. **Marcar columnas — páginas pares** (mismo canvas, mostrando página 2 del PDF).
+6. **Preview OCR**: tabla de transacciones detectadas (primeras páginas), para verificar la calibración antes de guardar.
+7. **Guardar**: `POST /save-calibration` → JSON en `calibraciones/`.
 
-### 6.2 Funcionalidad del canvas
+### 6.2 Funcionalidad del canvas (`canvas.js` — `CalibrationCanvas`)
 
-- Zoom: niveles 0.25x a 3.0x.
-- Click izquierdo: agregar línea vertical.
-- Click derecho: eliminar línea más cercana.
-- Undo (Ctrl+Z).
-- Clear: borrar todas las líneas.
-- Zonas de color con stipple entre líneas (feedback visual de columnas).
-- Status label: "N de N-1 líneas marcadas".
-
-### 6.3 Navegación del wizard
-
-- Botones Atrás / Siguiente en cada paso.
-- Pila de pasos (stack) para soporte de branching.
-- Cada paso valida condiciones antes de permitir avanzar.
+- Renderizado con **pdf.js** (sin backend, sin latencia).
+- Navegación entre páginas con botones ◀ ▶.
+- Zoom interactivo.
+- Modo columnas (X): click izquierdo agrega línea vertical; click derecho elimina.
+- Modo límites horizontales (Y): marca área útil (top/bottom) para ignorar encabezados y pies de página.
+- Contador en tiempo real: se vuelve verde cuando se alcanzan las líneas requeridas.
+- Evento custom `linesChanged` para sincronizar el contador en el HTML.
 
 ---
 
-## 7. GUI principal (`main.py`)
+## 7. Interfaz web de conversión (`static/index.html` — pantalla "Convertir a Excel")
 
 ### 7.1 Flujo
 
-1. El usuario selecciona un PDF.
-2. El sistema detecta el tipo (escaneado o con texto) e informa.
-3. El sistema sugiere el perfil de calibración más reciente compatible.
-4. El usuario puede aceptar o elegir otro perfil.
-5. El usuario puede lanzar la calibración si no hay perfiles.
-6. El usuario inicia la conversión.
-7. Se muestra progreso.
-8. Al terminar: botón para abrir el Excel generado.
+1. El usuario ingresa el nombre de empresa.
+2. Selecciona el perfil de calibración del banco.
+3. Sube uno o varios PDFs. Si el PDF tiene texto seleccionable, se le pregunta si usar extracción directa o OCR.
+4. Hace click en "Convertir". La barra de progreso avanza página a página (Server-Sent Events).
+5. Al terminar: botón de descarga por cada Excel generado.
 
 ### 7.2 Tecnología
 
-- Tkinter (estándar de Python, sin dependencias extra de GUI).
-- Sin diseño elaborado; funcional y claro.
+- Frontend: SPA HTML/JS sin framework, usando pdf.js para renderizado.
+- Backend: FastAPI con `StreamingResponse` (SSE) para progreso en tiempo real.
+- PDFs temporales con nombre UUID para aislar sesiones concurrentes.
 
 ---
 
@@ -256,30 +250,31 @@ La columna **HOJA** facilita la corrección manual: cuando un importe queda vac�
 
 ---
 
-## 12. Decisiones de diseño acordadas
+## 12. Decisiones de diseño
 
 | Decisión | Resolución |
 |---|---|
-| Mecanismo de calibración | Wizard interactivo (reemplaza "Copia de" PDF) |
+| Interfaz principal | App web local (FastAPI + HTML/JS + pdf.js) — sin tkinter |
+| Mecanismo de calibración | Wizard interactivo en el browser (canvas.js) |
 | Persistencia de calibración | JSON en `calibraciones/` local |
 | Nombre del JSON | `{banco}_{tipo}_{yyyy-mm}.json`; mismo yyyy-mm sobreescribe |
-| Selección de calibración | Automática (más reciente); el usuario puede elegir |
-| Preview de calibración | Tabla de texto parseado (más rápido de implementar) |
-| GUI principal | Tkinter |
-| Soporte multi-banco | Por módulos; detección por encabezado de PDF (futuro) |
-| PDF con texto seleccionable | Preguntar: extracción directa (pdfplumber, recomendado) o forzar OCR |
+| Selección de calibración | El usuario elige desde el dropdown; se listan todos los perfiles disponibles |
+| Preview de calibración | Tabla de transacciones detectadas via `POST /preview-ocr` |
+| Soporte multi-banco | Por perfiles JSON; cualquier banco se puede calibrar desde la UI |
+| PDF con texto seleccionable | El servidor detecta el tipo; la UI pregunta: extracción directa (pdfplumber) o forzar OCR |
 | Asignación de columnas | Borde izquierdo + rangos estrictos (no "closest column") |
 | Headers del Excel | Dinámicos: derivados de los nombres de columna del perfil de calibración |
 | Páginas pares vs impares | Dos conjuntos de rangos independientes en el JSON |
 | Marcas de agua | No resueltas automáticamente; columna HOJA guía la corrección manual |
 | Preprocesamiento OCR | Binarización con threshold configurable (`--threshold`, default 160) para reducir ruido |
+| Progreso de conversión | Server-Sent Events (SSE): la barra avanza página a página en tiempo real |
+| Aislamiento de sesiones | PDFs temporales nombrados con UUID para evitar colisiones entre usuarios |
 
 ---
 
 ## 13. Fuera de alcance (por ahora)
 
 - Sincronización remota de calibraciones.
-- Soporte automático para otros bancos (se requiere calibración manual).
-- Detección automática del banco por texto del header.
-- Procesamiento por lotes desde la GUI.
+- Detección automática del banco por texto del header (requiere calibración manual siempre).
 - Detección de duplicados al consolidar meses.
+- Multi-tenant / autenticación (es una herramienta de uso individual/doméstico).
