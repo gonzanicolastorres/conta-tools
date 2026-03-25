@@ -1,8 +1,8 @@
 # Plan de Correcciones — Conta Tools / Lector de Extractos
 
-**Fecha:** 2026-03-23
-**Basado en:** Auditoría completa del proyecto
-**Para:** Agente de implementación
+**Fecha original:** 2026-03-23
+**Actualizado:** 2026-03-24
+**Estado:** COMPLETADO — todos los fixes implementados
 
 ---
 
@@ -24,9 +24,9 @@ App web (FastAPI + HTML/JS) que convierte extractos bancarios PDF escaneados a E
 
 ---
 
-## Prioridad 1 — Bugs críticos (rompen funcionalidad existente)
+## Prioridad 1 — Bugs críticos ✅ TODOS IMPLEMENTADOS
 
-### 1.1 `/convert` devuelve HTTP 200 en caso de error
+### 1.1 `/convert` devuelve HTTP 200 en caso de error ✅
 
 **Archivo:** `server.py` líneas 123–131
 **Problema:** Cuando `convert()` lanza `ConversionError`, el endpoint lo captura y devuelve `{"error": "...", "excel_url": ""}` con status 200. El frontend JS verifica `res.ok && json.excel_url` y como `res.ok` es `true` (status 200), no detecta el error correctamente.
@@ -46,7 +46,7 @@ El frontend ya maneja el caso `!res.ok` mostrando `json.detail` como error.
 
 ---
 
-### 1.2 `/convert` no acepta el campo `empresa`
+### 1.2 `/convert` no acepta el campo `empresa` ✅
 
 **Archivos:** `server.py` línea 103, `pdf_to_excel.py` función `convert()`
 **Problema:** El frontend envía `formData.append("empresa", empresa)` pero el endpoint no lo recibe. La función `convert()` ya acepta `empresa=` como kwarg opcional, pero el endpoint no lo pasa.
@@ -65,7 +65,7 @@ async def convert_pdf(
 
 ---
 
-### 1.3 `result.total_transactions` no existe
+### 1.3 `result.total_transactions` no existe ✅
 
 **Archivo:** `server.py` línea 128
 **Problema:** El código accede a `result.total_transactions` pero `ConversionResult` tiene el campo `transactions` (lista), no `total_transactions`.
@@ -81,7 +81,7 @@ async def convert_pdf(
 
 ---
 
-### 1.4 `build_col_ranges` en `/preview-ocr` recibe datos incorrectos
+### 1.4 `build_col_ranges` en `/preview-ocr` recibe datos incorrectos ✅
 
 **Archivo:** `server.py` líneas 146–149
 **Problema:** `build_col_ranges()` espera `{col: start_pct}` (solo el inicio), pero el payload tiene `{col: [start, end]}`. Se hace `rng[0]` para extraer solo el inicio, lo cual es correcto, pero después se llama `build_col_ranges` que recalcula los extremos basándose en los starts — perdiendo los extremos explícitamente calibrados.
@@ -99,9 +99,9 @@ if payload.paginas_pares:
 
 ---
 
-## Prioridad 2 — Funcionalidad incompleta
+## Prioridad 2 — Funcionalidad incompleta ✅ TODOS IMPLEMENTADOS
 
-### 2.1 Barra de progreso real durante conversión
+### 2.1 Barra de progreso real durante conversión ✅
 
 **Problema:** El endpoint `/convert` es síncrono y bloquea 30-120 segundos. El frontend solo muestra texto estático `"Procesando: archivo.pdf…"` y la barra no avanza hasta que termina el archivo.
 
@@ -209,7 +209,7 @@ Nota: `on_progress` de `convert()` es síncrono y el endpoint usa un generador, 
 
 ---
 
-### 2.2 Canvas: navegación entre páginas en el paso de marcado
+### 2.2 Canvas: navegación entre páginas en el paso de marcado ✅
 
 **Archivo:** `static/index.html` y `static/canvas.js`
 **Problema:** El usuario solo ve la página correspondiente a la paridad que está calibrando (impar = pág 1, par = pág 2). No puede navegar a otras páginas para verificar el layout sin cambiar de fase.
@@ -251,7 +251,7 @@ Llamar `updatePageIndicator()` también después de `calCanvas.setPage(1)` y `ca
 
 ---
 
-### 2.3 Contador de líneas marcadas en el canvas
+### 2.3 Contador de líneas marcadas en el canvas ✅
 
 **Archivo:** `static/index.html`
 **Problema:** El usuario no sabe cuántas líneas necesita marcar para completar la calibración. Solo se entera cuando hace click en "Confirmar" y aparece un `alert`.
@@ -292,7 +292,7 @@ document.getElementById('draw-canvas').addEventListener('linesChanged', (e) => {
 
 ---
 
-### 2.4 Validación del campo período en Setup
+### 2.4 Validación del campo período en Setup ✅
 
 **Archivo:** `static/index.html`
 **Problema:** El campo `período` acepta cualquier texto. Si no tiene formato `YYYY-MM`, el nombre del archivo JSON generado queda inconsistente y `CalibrationFinder` no puede ordenar perfiles correctamente.
@@ -309,7 +309,7 @@ if (!/^\d{4}-\d{2}$/.test(periodo)) {
 
 ---
 
-### 2.5 Limpiar PDF temporal entre conversiones
+### 2.5 Limpiar PDF temporal entre conversiones ✅
 
 **Archivo:** `server.py`
 **Problema:** El endpoint `/upload-pdf` siempre guarda en `temp/current_workspace.pdf`. Si dos usuarios usan la app simultáneamente (o si el mismo usuario sube un archivo nuevo mientras otro está en preview), el PDF en memoria es el equivocado.
@@ -346,9 +346,9 @@ stateJSON.pdf_url = json.pdf_url;
 
 ---
 
-## Prioridad 3 — Calidad y robustez
+## Prioridad 3 — Calidad y robustez ✅ TODOS IMPLEMENTADOS
 
-### 3.1 Agregar warnings en el Excel cuando hay filas con montos vacíos
+### 3.1 Agregar warnings en el Excel cuando hay filas con montos vacíos ✅
 
 **Archivo:** `core/excel_writer.py`
 **Estado actual:** Las filas sin débito ni crédito ya se colorean en amarillo (`COLOR_EMPTY = "FFFF99"`). ✓
@@ -384,7 +384,7 @@ if filas_vacias:
 
 ---
 
-### 3.2 Validar que el perfil de calibración tiene las columnas correctas antes de convertir
+### 3.2 Validar que el perfil de calibración tiene las columnas correctas antes de convertir ✅
 
 **Archivo:** `server.py` endpoint `/convert`
 **Problema:** Si el perfil tiene columnas que no matchean el PDF, el OCR corre igual y genera un Excel vacío o con datos en columnas incorrectas. No hay aviso al usuario.
@@ -401,7 +401,7 @@ if not data.columnas:
 
 ---
 
-### 3.3 Timeout explícito en el servidor para OCR
+### 3.3 Timeout explícito en el servidor para OCR ✅
 
 **Archivo:** `server.py`
 **Problema:** Si el PDF tiene muchas páginas (ej: 50+) el OCR puede tardar varios minutos. La conexión HTTP del cliente puede hacer timeout antes de que termine.
@@ -417,7 +417,7 @@ En `/preview-ocr` usar `MAX_PAGES_PREVIEW` en `last_page=MAX_PAGES_PREVIEW`.
 
 ---
 
-### 3.4 Nombre del Excel generado debe coincidir con el nombre del PDF
+### 3.4 Nombre del Excel generado debe coincidir con el nombre del PDF ✅
 
 **Archivo:** `server.py` endpoint `/convert`
 **Estado actual:** Genera `extracto_excel_{nombre}.xlsx`. El frontend lo descarga con ese nombre.
@@ -430,9 +430,9 @@ output_filename = f"{original_name_base}.xlsx"  # cambiar de "extracto_excel_{..
 
 ---
 
-## Prioridad 4 — Pantalla de inicio "Conta Tools"
+## Prioridad 4 — Pantalla de inicio "Conta Tools" ✅ IMPLEMENTADO
 
-### 4.0 Landing page como punto de entrada de la aplicación
+### 4.0 Landing page como punto de entrada de la aplicación ✅
 
 **Archivo:** `static/index.html`
 **Problema:** La app arranca directamente en el listado de perfiles de calibración. No hay pantalla de bienvenida, no queda claro qué es la herramienta ni cómo navegarla. El header actual tiene dos botones que cambian de modo, lo cual es confuso.
@@ -511,21 +511,21 @@ output_filename = f"{original_name_base}.xlsx"  # cambiar de "extracto_excel_{..
 
 ---
 
-## Prioridad 5 — Deuda técnica
+## Prioridad 5 — Deuda técnica ✅ TODOS IMPLEMENTADOS
 
-### 5.1 Importaciones desordenadas en `server.py`
+### 5.1 Importaciones desordenadas en `server.py` ✅
 
 Las importaciones están mezcladas: `from pydantic import BaseModel` aparece en el medio del archivo (línea 81) en lugar de al principio. Mover todas las importaciones al inicio del archivo.
 
 ---
 
-### 5.2 Eliminar código legacy (tkinter)
+### 5.2 Eliminar código legacy (tkinter) ✅
 
 Los archivos `main.py` y `calibrator.py` son la versión tkinter que fue reemplazada por el frontend web. Pueden archivarse en una carpeta `legacy/` para no confundir a futuros colaboradores.
 
 ---
 
-### 5.3 Comentarios desactualizados en `server.py`
+### 5.3 Comentarios desactualizados en `server.py` ✅
 
 - Línea 78: `# W2 usará esto` → actualizar a descripción real
 - Línea 104: `"""Punto de entrada final W5...` → actualizar
