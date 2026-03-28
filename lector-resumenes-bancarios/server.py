@@ -114,10 +114,12 @@ class CalibrationPayload(BaseModel):
 
 @app.post("/convert")
 async def convert_pdf(
-    file: UploadFile = File(...), 
+    file: UploadFile = File(...),
     profile_name: str = Form(...),
     empresa: str = Form(default=""),
     method: str = Form(default="auto"),
+    page_from: Optional[int] = Form(default=None),
+    page_to: Optional[int] = Form(default=None),
 ):
     """Endpoint principal de conversión con SSE para progreso."""
     pdf_path = TEMP_DIR / "temp_conversion.pdf"
@@ -152,6 +154,8 @@ async def convert_pdf(
                 str(pdf_path), data, str(output_path),
                 empresa=empresa,
                 method=method,
+                page_from=page_from,
+                page_to=page_to,
                 on_progress=on_progress,
             )
             # Vaciar eventos acumulados

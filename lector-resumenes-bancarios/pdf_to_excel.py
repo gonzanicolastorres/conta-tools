@@ -60,6 +60,8 @@ def convert(
     dpi: int = 200,
     threshold: int = 160,
     method: str = "auto",
+    page_from: Optional[int] = None,
+    page_to: Optional[int] = None,
     on_progress: Optional[Callable[[int, int, str], None]] = None,
 ) -> ConversionResult:
     """
@@ -124,18 +126,40 @@ def convert(
         except Exception as exc:
             raise ConversionError(f"No se pudo renderizar el PDF: {exc}") from exc
 
-    _progress(0, total, f"PDF cargado — {total} páginas")
+    # Aplicar rango de páginas si se especificó
+    first_page = max(1, page_from) if page_from else 1
+    last_page  = min(total, page_to) if page_to else total
+    if first_page > last_page:
+        raise ConversionError(
+            f"Rango de páginas inválido: {first_page}-{last_page} (el PDF tiene {total} páginas)."
+        )
+
+    metodo_label = "extracción de texto" if use_plumber else "OCR"
+    rango_label  = f"págs {first_page}–{last_page}" if (first_page != 1 or last_page != total) else f"{total} págs"
+    _progress(0, total, f"PDF cargado — {rango_label} · método: {metodo_label}")
 
     metadata: dict = {}
     transactions: list = []
     warnings: List[str] = []
 
-    for page_num in range(1, total + 1):
+    for page_num in range(first_page, last_page + 1):
         _progress(page_num, total, f"Procesando página {page_num}/{total}")
 
-        is_even = (page_num % 2 == 0)
-        active_ranges = col_ranges_even if (is_even and col_ranges_even) else col_ranges_odd
-        y_bounds = y_bounds_even if (is_even and y_bounds_even) else y_bounds_odd
+        if use_plumber:
+            # Para PDFs de texto, detectar el layout real de la página en lugar
+            # de asumir alternancia par/impar. Cuando una hoja tiene una sola
+            # cara (sin dorso), la alternancia se rompe a partir de esa página.
+            # Se detecta el layout mirando la x_pct de la primera fecha DD-MM.
+            page_is_even = _detect_page_layout(
+                pdf_path, page_num, col_ranges_odd, col_ranges_even
+            )
+        else:
+            # Para OCR no hay coordenadas exactas disponibles de antemano;
+            # se mantiene la heurística par/impar por número de página.
+            page_is_even = (page_num % 2 == 0)
+
+        active_ranges = col_ranges_even if (page_is_even and col_ranges_even) else col_ranges_odd
+        y_bounds = y_bounds_even if (page_is_even and y_bounds_even) else y_bounds_odd
         active_y = y_bounds if (y_bounds and len(y_bounds) == 2) else None
 
         if use_plumber:
@@ -143,7 +167,12 @@ def convert(
                 word_list = extract_page_words_plumber(
                     pdf_path, page_num, y_bounds=active_y
                 )
-                rows = group_words_into_rows(word_list)
+                # pdfplumber usa puntos PDF (A4 ≈ 842pt), no píxeles.
+                # y_tolerance=12 fue diseñado para OCR en píxeles a 200 DPI
+                # donde 12px << altura de línea (~40px). En puntos PDF,
+                # 12pt ≈ 1 línea completa → fusiona filas adyacentes.
+                # Con 3pt tenemos margen suficiente sin cruzar al renglón siguiente.
+                rows = group_words_into_rows(word_list, y_tolerance=3)
             except Exception as exc:
                 warnings.append(f"Página {page_num}: extracción de texto falló — {exc}")
                 continue
@@ -162,9 +191,28 @@ def convert(
                 y_bounds=active_y,
             )
 
-        # Extraer metadata desde la primera página
+        # Extraer metadata desde la primera página.
+        # Para PDFs seleccionables, los `rows` ya vienen filtrados por y_bounds
+        # (que excluye el encabezado del documento). Se hace una pasada separada
+        # sin filtro de y_bounds para capturar titular, CUIT y período.
         if page_num == 1:
-            _extract_metadata(rows, metadata)
+            if use_plumber:
+                try:
+                    header_words = extract_page_words_plumber(pdf_path, 1, y_bounds=None)
+                    header_rows  = group_words_into_rows(header_words, y_tolerance=3)
+                    _extract_metadata(header_rows, metadata)
+                    # La fila "SALDO ULTIMO EXTRACTO" queda fuera del y_bounds;
+                    # la buscamos en la pasada sin filtro de la página 1.
+                    for row in header_rows:
+                        if is_saldo_inicial(row):
+                            val = extract_saldo_inicial(row)
+                            if val and not metadata.get("saldo_inicial"):
+                                metadata["saldo_inicial"] = val
+                            break
+                except Exception:
+                    _extract_metadata(rows, metadata)  # fallback
+            else:
+                _extract_metadata(rows, metadata)
 
         if active_ranges is None:
             warnings.append(f"Página {page_num}: sin rangos de columna — se omite.")
@@ -186,7 +234,7 @@ def convert(
                 tx["pagina"]       = page_num
                 transactions.append(tx)
 
-    _progress(total, total, f"OCR completado — {len(transactions)} movimientos")
+    _progress(total, total, f"{metodo_label.capitalize()} completada — {len(transactions)} movimientos")
 
     if not transactions:
         raise NoTransactionsError(
@@ -210,6 +258,46 @@ def convert(
 
 
 # ── Helpers internos ───────────────────────────────────────────────────────────
+
+def _detect_page_layout(pdf_path: str, page_num: int,
+                        col_ranges_odd: dict, col_ranges_even: dict) -> bool:
+    """
+    Detecta si una página tiene layout 'par' (dorso) o 'impar' (frente)
+    mirando la x_pct de la primera fecha DD-MM que aparece en la página.
+
+    La alternancia par/impar por número de página falla cuando alguna hoja
+    del extracto tiene una sola cara (sin dorso), lo que desplaza la paridad
+    de todas las páginas siguientes.
+
+    Retorna True si la página tiene layout 'par' (even), False si 'impar' (odd).
+    Si no hay col_ranges_even definidos, retorna siempre False.
+    """
+    if not col_ranges_even:
+        return False
+
+    from core.pdf_reader import extract_page_words_plumber
+    from core.ocr_engine import group_words_into_rows
+
+    try:
+        words = extract_page_words_plumber(pdf_path, page_num, y_bounds=None)
+    except Exception:
+        return (page_num % 2 == 0)  # fallback a heurística
+
+    rows = group_words_into_rows(words, y_tolerance=3)
+
+    # Buscar la x_pct de la primera palabra que sea una fecha DD-MM
+    fecha_range_odd  = col_ranges_odd.get("fecha",  (0, 100))
+    fecha_range_even = col_ranges_even.get("fecha", (0, 100))
+    midpoint_odd  = (fecha_range_odd[0]  + fecha_range_odd[1])  / 2
+    midpoint_even = (fecha_range_even[0] + fecha_range_even[1]) / 2
+    threshold = (midpoint_odd + midpoint_even) / 2  # punto medio entre ambos centros
+
+    for row in rows:
+        for w in row:
+            if re.match(r"^\d{2}-\d{2}$", w["text"]):
+                return w["x_pct"] < threshold
+    return (page_num % 2 == 0)  # fallback si no se encontró ninguna fecha
+
 
 def _profile_to_col_ranges(profile: CalibrationData, parity: str) -> Optional[dict]:
     """Convierte las ranges del perfil al formato {col: (start%, end%)} que usa el pipeline."""
@@ -267,12 +355,9 @@ def main():
 
     output_path = args.out or str(pdf_path.with_suffix(".xlsx"))
 
-    # Aviso si el PDF tiene texto seleccionable
     pdf_type = detect_pdf_type(str(pdf_path))
     if pdf_type == "text":
-        print(f"Aviso: '{pdf_path.name}' tiene texto seleccionable.")
-        print("  Se procesará con OCR de todas formas.")
-        print("  (Extracción directa vía pdfplumber: pendiente de implementación)")
+        print(f"Aviso: '{pdf_path.name}' tiene texto seleccionable — se usará extracción directa.")
 
     profile = CalibrationIO.load(str(profile_path))
     print(f"Perfil: {profile.banco} / {profile.tipo_documento} / {profile.periodo}")

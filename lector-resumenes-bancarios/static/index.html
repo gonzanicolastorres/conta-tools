@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calibrador Bancario ICBC</title>
+    <title>Conta Tools</title>
     <!-- Global dependency for canvas.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <style>
@@ -133,9 +133,19 @@
                 <input type="file" id="pdf-convert-file" accept="application/pdf" multiple style="margin-top:4px;">
             </div>
 
-            <!-- Lista de archivos seleccionados -->
-            <div id="convert-file-list" style="display:none; border:1px solid #CFD8DC; border-radius:4px; background:#F5F8FC; padding:8px; max-height:160px; overflow-y:auto;">
-                <ul id="convert-file-names" style="margin:0; padding-left:18px; font-size:0.9em;"></ul>
+            <!-- Tabla de archivos con rango de páginas -->
+            <div id="convert-file-list" style="display:none; border:1px solid #CFD8DC; border-radius:4px; background:#F5F8FC; padding:12px; margin-top:10px;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+                    <thead>
+                        <tr style="background:#E3F2FD; border-bottom:2px solid #1565C0;">
+                            <th style="padding:6px; text-align:left; font-weight:bold;">Archivo</th>
+                            <th style="padding:6px; text-align:center; font-weight:bold; width:80px;">Desde</th>
+                            <th style="padding:6px; text-align:center; font-weight:bold; width:80px;">Hasta</th>
+                        </tr>
+                    </thead>
+                    <tbody id="convert-file-rows" style="max-height:200px; overflow-y:auto;"></tbody>
+                </table>
+                <p style="margin:8px 0 0; color:#546E7A; font-size:0.85em;">Dejá vacío para convertir todas las páginas de cada archivo.</p>
             </div>
 
             <button id="btn-run-convert" class="btn-primary" style="padding: 12px; background-color: #0D47A1; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">▶ Iniciar Conversión</button>
@@ -642,21 +652,35 @@
         
         // ================= W5: Conversor masivo =================
 
-        // Mostrar lista de archivos seleccionados
+        // Mostrar tabla de archivos seleccionados con inputs de rango de páginas
         document.getElementById("pdf-convert-file").addEventListener("change", (e) => {
             const files = Array.from(e.target.files);
-            const listEl = document.getElementById("convert-file-names");
-            listEl.innerHTML = files.map(f => `<li>${f.name}</li>`).join("");
+            const rowsEl = document.getElementById("convert-file-rows");
+
+            rowsEl.innerHTML = files.map((f, idx) => `
+                <tr style="border-bottom:1px solid #CFD8DC; background:${idx % 2 === 0 ? '#FFF' : '#FAFAFA'};">
+                    <td style="padding:8px;">${f.name}</td>
+                    <td style="padding:4px; text-align:center;">
+                        <input type="number" class="page-from" min="1" placeholder="1" style="width:60px; padding:4px; border:1px solid #999; border-radius:3px;" data-file="${f.name}">
+                    </td>
+                    <td style="padding:4px; text-align:center;">
+                        <input type="number" class="page-to" min="1" placeholder="-" style="width:60px; padding:4px; border:1px solid #999; border-radius:3px;" data-file="${f.name}">
+                    </td>
+                </tr>
+            `).join("");
+
             document.getElementById("convert-file-list").style.display = files.length ? "block" : "none";
         });
         
-        async function convertirArchivo(file, profile, empresa, actualizarProgreso) {
+        async function convertirArchivo(file, profile, empresa, pageFrom, pageTo, actualizarProgreso) {
             return new Promise(async (resolve) => {
                 const formData = new FormData();
                 formData.append("file", file);
                 formData.append("profile_name", profile);
                 formData.append("empresa", empresa);
                 formData.append("method", stateJSON.method || "auto");
+                if (pageFrom) formData.append("page_from", pageFrom);
+                if (pageTo)   formData.append("page_to",   pageTo);
         
                 try {
                     const res = await fetch("/convert", { method: "POST", body: formData });
@@ -715,6 +739,17 @@
             const files    = Array.from(fileInput.files);
             const total    = files.length;
 
+            // Mapear rango de páginas por archivo desde los inputs de la tabla
+            const pageRanges = {};
+            files.forEach(f => {
+                const fromInput = document.querySelector(`.page-from[data-file="${f.name}"]`);
+                const toInput   = document.querySelector(`.page-to[data-file="${f.name}"]`);
+                pageRanges[f.name] = {
+                    from: fromInput?.value?.trim() || null,
+                    to:   toInput?.value?.trim() || null
+                };
+            });
+
             document.getElementById("btn-run-convert").disabled = true;
             document.getElementById("convert-downloads").style.display = "none";
             document.getElementById("convert-download-list").innerHTML = "";
@@ -726,8 +761,10 @@
 
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                
-                const res = await convertirArchivo(file, profile, empresa, (pct, msg) => {
+                const pageFrom = pageRanges[file.name].from;
+                const pageTo   = pageRanges[file.name].to;
+
+                const res = await convertirArchivo(file, profile, empresa, pageFrom, pageTo, (pct, msg) => {
                     document.getElementById("convert-status").innerText = `[${i + 1}/${total}] ${msg}`;
                     document.getElementById("convert-progress-bar").style.width = pct + "%";
                 });
