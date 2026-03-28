@@ -73,7 +73,15 @@ def extract_page_words_plumber(pdf_path, page_num, y_bounds=None):
     y_bounds: (y_min_pct, y_max_pct) para filtrar filas fuera del área útil.
     Retorna lista de {text, x, x_pct, y, y_pct} — mismo formato que
     group_into_rows() produce internamente.
+
+    Nota: pdfplumber mide 'top' desde el borde superior del bounding box del
+    texto, lo que produce y_pct levemente menores que el equivalente OCR
+    (que mide desde el tope del box de píxeles). Se aplica una tolerancia de
+    1.5 pp al filtro y_bounds para evitar que transacciones en los bordes del
+    área útil queden excluidas por esta pequeña diferencia de coordenadas.
     """
+    Y_BOUNDS_TOLERANCE = 1.5  # pp de tolerancia para diferencia OCR vs pdfplumber
+
     if pdfplumber is None:
         raise ImportError("pdfplumber no está instalado.")
     with pdfplumber.open(pdf_path) as pdf:
@@ -86,8 +94,11 @@ def extract_page_words_plumber(pdf_path, page_num, y_bounds=None):
             y     = float(w["top"])
             x_pct = x / page_width  * 100
             y_pct = y / page_height * 100
-            if y_bounds and not (min(y_bounds) <= y_pct <= max(y_bounds)):
-                continue
+            if y_bounds:
+                y_min = min(y_bounds) - Y_BOUNDS_TOLERANCE
+                y_max = max(y_bounds) + Y_BOUNDS_TOLERANCE
+                if not (y_min <= y_pct <= y_max):
+                    continue
             words.append({
                 "text":  w["text"],
                 "x":     x,

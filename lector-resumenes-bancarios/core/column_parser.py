@@ -8,13 +8,29 @@ COLUMNS = ["fecha", "concepto", "f_valor", "comprobante", "origen", "canal", "de
 
 
 def clean_amount(text):
-    """Convierte '1.200.000,00-' → -1200000.00 | '1.200.000,00' → 1200000.00"""
+    """Convierte '1.200.000,00-' → -1200000.00 | '1.200.000,00' → 1200000.00
+
+    Tolera números divididos por OCR en dos tokens, ej: '1.309.000, 90-'
+    (el OCR divide en '1.309.000,' y '90-' que luego se unen con espacio).
+    """
     if not text:
         return None
     text = text.strip()
     negative = text.endswith("-")
     text = text.rstrip("-").strip()
-    text = text.replace(".", "").replace(",", ".")
+    # El OCR a veces divide un número en varios tokens; eliminar espacios internos
+    # para reconstruir el número completo antes de parsearlo.
+    text = text.replace(" ", "")
+    # Formato Argentina: separador de miles = '.', decimal = ','
+    # Si hay múltiples comas (ej: '919,493,90' por ruido OCR), la última es decimal.
+    text = text.replace(".", "")
+    parts = text.split(",")
+    if len(parts) > 2:
+        text = "".join(parts[:-1]) + "." + parts[-1]
+    elif len(parts) == 2:
+        text = parts[0] + "." + parts[1]
+    else:
+        text = parts[0]
     try:
         value = float(text)
         return -value if negative else value
