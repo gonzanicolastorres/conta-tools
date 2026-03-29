@@ -9,6 +9,15 @@ build/
 # Archivos de debug y laboratorio OCR
 *.txt
 *.png
+ocr_lab/
+
+# PDFs de prueba e inputs de usuario
+*.pdf
+*.xlsx
+*.json
+lector-resumenes-bancarios/calibraciones/**
+# EXCEPTO los archivos de calibración de ejemplo del proyecto
+!lector-resumenes-bancarios/calibraciones/README.md
 
 # Archivos temporales
 temp/
