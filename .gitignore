@@ -1,0 +1,28 @@
+# Archivos de sistema
+.DS_Store
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+
+# Archivos de debug y laboratorio OCR
+*.txt
+*.png
+
+# Archivos temporales
+temp/
+tmp/
+*.tmp
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Entorno
+.env
+.venv
+venv/
+env/

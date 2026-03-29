@@ -6,12 +6,22 @@ import re
 
 COLUMNS = ["fecha", "concepto", "f_valor", "comprobante", "origen", "canal", "debitos", "creditos", "saldos"]
 
+# Patrón de fecha flexible para soportar múltiples formatos
+# DD-MM (ej: 01-04), DD/MM/YY (ej: 03/02/25), DD/MM/YYYY (ej: 03/02/2025)
+FECHA_PATTERN = r"^\d{2}[-/]\d{2}(?:[-/]\d{2,4})?$"
 
-def clean_amount(text):
+
+def clean_amount(text, column=None):
     """Convierte '1.200.000,00-' → -1200000.00 | '1.200.000,00' → 1200000.00
 
     Tolera números divididos por OCR en dos tokens, ej: '1.309.000, 90-'
     (el OCR divide en '1.309.000,' y '90-' que luego se unen con espacio).
+
+    Args:
+        text: texto numérico a parsear
+        column: nombre de la columna (ej: "debitos", "creditos", "saldos")
+                Si es "debitos", fuerza el resultado a ser negativo
+                Si es "creditos", fuerza el resultado a ser positivo
     """
     if not text:
         return None
@@ -33,7 +43,17 @@ def clean_amount(text):
         text = parts[0]
     try:
         value = float(text)
-        return -value if negative else value
+
+        # Aplicar lógica de signo según la columna
+        if column == "debitos":
+            # Débitos siempre son negativos
+            return -abs(value)
+        elif column == "creditos":
+            # Créditos siempre son positivos
+            return abs(value)
+        else:
+            # Para otras columnas (saldos, etc), respetar el signo detectado
+            return -value if negative else value
     except ValueError:
         return None
 
@@ -59,11 +79,18 @@ def assign_column_strict(x_left_pct, col_ranges):
 
 
 def is_transaction_row(row, col_ranges):
-    """Retorna True si la fila empieza con DD-MM en la columna fecha."""
+    """Retorna True si la fila empieza con una fecha válida en la columna fecha.
+
+    Soporta formatos:
+    - DD-MM (ej: 01-04)
+    - DD/MM/YY (ej: 03/02/25)
+    - DD/MM/YYYY (ej: 03/02/2025)
+    """
     fecha_words = [w for w in row if assign_column_strict(w["x_pct"], col_ranges) == "fecha"]
     if not fecha_words:
         return False
-    return bool(re.match(r"^\d{2}-\d{2}$", fecha_words[0]["text"]))
+    fecha_text = fecha_words[0]["text"].strip()
+    return bool(re.match(FECHA_PATTERN, fecha_text))
 
 
 def row_to_transaction(row, col_ranges):
@@ -79,7 +106,7 @@ def row_to_transaction(row, col_ranges):
     # Post-proceso: tokens extra en fecha se desbordan al concepto
     # (el header "CONCEPTO" está más a la derecha que donde empieza la data)
     fecha_tokens = result["fecha"].split()
-    if fecha_tokens and re.match(r"^\d{2}-\d{2}$", fecha_tokens[0]):
+    if fecha_tokens and re.match(FECHA_PATTERN, fecha_tokens[0]):
         result["fecha"] = fecha_tokens[0]
         if len(fecha_tokens) > 1:
             overflow = " ".join(fecha_tokens[1:])

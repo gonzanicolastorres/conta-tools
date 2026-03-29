@@ -26,6 +26,7 @@ from core.column_parser import (
     clean_amount, build_col_ranges,
     is_transaction_row, row_to_transaction,
     is_saldo_inicial, extract_saldo_inicial,
+    FECHA_PATTERN,
 )
 from core.excel_writer import write_excel
 
@@ -59,10 +60,12 @@ def convert(
     lang: str = "spa",
     dpi: int = 200,
     threshold: int = 160,
+    psm: int = 6,
     method: str = "auto",
     page_from: Optional[int] = None,
     page_to: Optional[int] = None,
     on_progress: Optional[Callable[[int, int, str], None]] = None,
+    adaptive: bool = False,
 ) -> ConversionResult:
     """
     Convierte un PDF bancario a Excel usando el perfil de calibración dado.
@@ -74,6 +77,7 @@ def convert(
         lang         — idioma OCR (default: "spa")
         dpi          — resolución de renderizado (default: 200)
         threshold    — umbral de binarización OCR (default: 160)
+        psm          — Page Segmentation Mode de Tesseract (default: 6)
         on_progress  — callback(pagina_actual, total_paginas, mensaje)
                        llamado antes de cada página y al finalizar.
                        Si es None, el progreso se ignora silenciosamente.
@@ -180,7 +184,7 @@ def convert(
             img = images[page_num - 1]
             page_width = img.width
             try:
-                ocr_data = run_ocr(img, lang=lang, threshold=threshold)
+                ocr_data = run_ocr(img, lang=lang, threshold=threshold, psm=psm, remove_watermark=False, adaptive=adaptive)
             except Exception as exc:
                 warnings.append(f"Página {page_num}: OCR falló — {exc}")
                 continue
@@ -228,9 +232,9 @@ def convert(
 
             if is_transaction_row(row, active_ranges):
                 tx = row_to_transaction(row, active_ranges)
-                tx["debitos_num"]  = clean_amount(tx.get("debitos",  ""))
-                tx["creditos_num"] = clean_amount(tx.get("creditos", ""))
-                tx["saldos_num"]   = clean_amount(tx.get("saldos",   ""))
+                tx["debitos_num"]  = clean_amount(tx.get("debitos",  ""), column="debitos")
+                tx["creditos_num"] = clean_amount(tx.get("creditos", ""), column="creditos")
+                tx["saldos_num"]   = clean_amount(tx.get("saldos",   ""), column="saldos")
                 tx["pagina"]       = page_num
                 transactions.append(tx)
 
@@ -294,7 +298,7 @@ def _detect_page_layout(pdf_path: str, page_num: int,
 
     for row in rows:
         for w in row:
-            if re.match(r"^\d{2}-\d{2}$", w["text"]):
+            if re.match(FECHA_PATTERN, w["text"]):
                 return w["x_pct"] < threshold
     return (page_num % 2 == 0)  # fallback si no se encontró ninguna fecha
 
@@ -311,7 +315,8 @@ def _extract_metadata(rows: list, metadata: dict):
     """Extrae período, CUIT y titular de las primeras filas de la página 1."""
     full_text = " ".join(w["text"] for row in rows for w in row)
 
-    m = re.search(r"(\d{2}-\d{2}-\d{4}\s+AL\s+\d{2}-\d{2}-\d{4})", full_text, re.I)
+    # Patrón flexible para período: soporta DD-MM-YYYY AL DD-MM-YYYY y DD/MM/YYYY AL DD/MM/YYYY
+    m = re.search(r"(\d{2}[-/]\d{2}[-/]\d{4}\s+AL\s+\d{2}[-/]\d{2}[-/]\d{4})", full_text, re.I)
     if m:
         metadata["periodo"] = m.group(1)
 
